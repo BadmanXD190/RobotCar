@@ -1,30 +1,32 @@
-# ESP32 Car Controller (HiveMQ Cloud TLS) — Option B (TLS configured once)
+# ESP32 Car Controller — HiveMQ Cloud (TLS, Auto Connect)
 import time
 import streamlit as st
 import paho.mqtt.client as mqtt
 
-st.set_page_config(page_title="ESP32 Car Controller (HiveMQ Cloud)", layout="centered")
-st.title("🚗 ESP32 Car Controller (HiveMQ Cloud)")
+st.set_page_config(page_title="ESP32 Car Controller", layout="centered")
+st.title("🚗 ESP32 Car Controller (HiveMQ Cloud Auto)")
 
-# ---------- UI: Connection settings ----------
-broker = st.text_input("Broker Host", "e03bf396880b4e10b7a6bbb5f69bdf16.s1.eu.hivemq.cloud")
-port = st.number_input("Port", 1, 65535, 8883)
-username = st.text_input("Username", "")
-password = st.text_input("Password", "", type="password")
-device_id = st.text_input("Device ID", "esp32car-01").strip()
-qos = st.selectbox("QoS", [0, 1], index=0)
+# ---------- Fixed HiveMQ Cloud Config ----------
+BROKER = "e03bf396880b4e10b7a6bbb5f69bdf16.s1.eu.hivemq.cloud"
+PORT = 8883
+USERNAME = "badmanXD"           # your HiveMQ Cloud username
+PASSWORD = "Siang09534" # replace with your actual HiveMQ Cloud password
+DEVICE_ID = "esp32car-01"
 
-topic_cmd = f"esp32car/{device_id}/cmd"
-topic_status = f"esp32car/{device_id}/status"
+TOPIC_CMD = f"esp32car/{DEVICE_ID}/cmd"
+TOPIC_STATUS = f"esp32car/{DEVICE_ID}/status"
+TOPIC_LWT = f"esp32car/{DEVICE_ID}/lwt"
 
-# ---------- Persistent MQTT client ----------
+QOS = 1
+
+# ---------- MQTT Client Setup ----------
 if "mqtt_client" not in st.session_state:
     c = mqtt.Client(client_id=f"st-{int(time.time())}")
     st.session_state.mqtt_client = c
     st.session_state.connected = False
-    st.session_state._tls_inited = False  # custom guard flag
+    st.session_state._tls_inited = False
 
-client: mqtt.Client = st.session_state.mqtt_client
+client = st.session_state.mqtt_client
 conn_msg = st.empty()
 status_box = st.empty()
 cmd_echo_box = st.empty()
@@ -32,13 +34,12 @@ cmd_echo_box = st.empty()
 def on_connect(c, userdata, flags, rc):
     if rc == 0:
         st.session_state.connected = True
-        conn_msg.success(f"✅ Connected to {broker}:{port}")
-        # Subscribe to status and command topics (echo)
-        c.subscribe(topic_status, qos=qos)
-        c.subscribe(topic_cmd, qos=qos)
+        conn_msg.success(f"✅ Connected to HiveMQ Cloud ({BROKER}:{PORT})")
+        c.subscribe(TOPIC_STATUS, qos=QOS)
+        c.subscribe(TOPIC_CMD, qos=QOS)
     else:
         st.session_state.connected = False
-        conn_msg.error(f"❌ Connection failed (rc={rc})")
+        conn_msg.error(f"❌ MQTT connect failed (rc={rc})")
 
 def on_message(c, userdata, msg):
     payload = msg.payload.decode("utf-8", errors="ignore")
@@ -47,23 +48,21 @@ def on_message(c, userdata, msg):
     else:
         cmd_echo_box.markdown(f"**Broker saw command** `{msg.topic}` → `{payload}`")
 
-# Set callbacks once
 client.on_connect = on_connect
 client.on_message = on_message
 
 def connect():
     try:
-        # Guard so TLS is only set once per client instance
         if not st.session_state._tls_inited:
-            client.tls_set()                 # enable SSL/TLS
+            client.tls_set()  # enable TLS once
             st.session_state._tls_inited = True
 
-        client.username_pw_set(username, password)
-        client.connect(broker, int(port), keepalive=60)
+        client.username_pw_set(USERNAME, PASSWORD)
+        client.connect(BROKER, PORT, keepalive=60)
         client.loop_start()
-        time.sleep(1)  # allow time for handshake; on_connect will update UI
+        time.sleep(1)
         if not st.session_state.connected:
-            conn_msg.warning("Connecting… click again if needed.")
+            conn_msg.warning("Connecting... please wait or click again.")
     except Exception as e:
         conn_msg.error(f"Connection error: {e}")
 
@@ -76,23 +75,19 @@ def disconnect():
     except Exception as e:
         conn_msg.error(f"Disconnect error: {e}")
 
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("Connect MQTT"):
-        connect()
-with c2:
-    if st.button("Disconnect"):
-        disconnect()
+# ---------- Auto connect on start ----------
+if not st.session_state.connected:
+    connect()
 
 st.divider()
 
-# ---------- Controls ----------
+# ---------- Car Controls ----------
 st.subheader("Controls")
-left, right = st.columns(2)
-with left:
-    speed = st.slider("Speed (0–255)", 0, 255, 160, 1)
-with right:
-    ms = st.slider("Duration (ms) (0 = continuous)", 0, 2000, 300, 50)
+colA, colB = st.columns(2)
+with colA:
+    speed = st.slider("Speed (0–255)", 0, 255, 160)
+with colB:
+    ms = st.slider("Duration (ms, 0 = continuous)", 0, 2000, 300)
 
 def publish_cmd(cmd, spd=None, dur=None):
     if not st.session_state.connected:
@@ -102,31 +97,31 @@ def publish_cmd(cmd, spd=None, dur=None):
     if dur is None: dur = ms
     payload = f"{cmd},{int(spd)},{int(dur)}" if cmd != "S" else "S"
     try:
-        info = client.publish(topic_cmd, payload, qos=qos)
+        info = client.publish(TOPIC_CMD, payload, qos=QOS)
         info.wait_for_publish(timeout=1.0)
-        st.success(f"→ {topic_cmd}: `{payload}`")
+        st.success(f"→ {TOPIC_CMD}: `{payload}`")
     except Exception as e:
         st.error(f"Publish failed: {e}")
 
-row1 = st.columns(3)
-with row1[1]:
+top = st.columns(3)
+with top[1]:
     if st.button("⬆️ Forward"):
         publish_cmd("F")
 
-row2 = st.columns(3)
-with row2[0]:
+mid = st.columns(3)
+with mid[0]:
     if st.button("⬅️ Left"):
         publish_cmd("L")
-with row2[1]:
+with mid[1]:
     if st.button("⏹️ Stop"):
         publish_cmd("S", 0, 0)
-with row2[2]:
+with mid[2]:
     if st.button("➡️ Right"):
         publish_cmd("R")
 
-row3 = st.columns(3)
-with row3[1]:
+bot = st.columns(3)
+with bot[1]:
     if st.button("⬇️ Backward"):
         publish_cmd("B")
 
-st.caption(f"CMD topic: `{topic_cmd}`  •  STATUS topic: `{topic_status}`  •  TLS port: {port}")
+st.caption(f"Connected to: `{BROKER}` • TLS: ON • Topics: `{TOPIC_CMD}` / `{TOPIC_STATUS}`")
