@@ -1,4 +1,4 @@
-# controller_ws_mosquitto.py — MQTT over WebSockets (WSS) to test.mosquitto.org
+# controller_ws_mosquitto_fixed.py — MQTT over WSS (TLS) to test.mosquitto.org
 import time
 import streamlit as st
 import paho.mqtt.client as mqtt
@@ -6,21 +6,21 @@ import paho.mqtt.client as mqtt
 st.set_page_config(page_title="ESP32 Car (Mosquitto WSS)", layout="centered")
 st.title("ESP32 Car Controller — Mosquitto (WSS)")
 
-# Settings
+# Connection fields
 broker = st.text_input("Broker host", "test.mosquitto.org")
-port = st.number_input("Port", 1, 65535, 8081)  # 8081 = WSS
+port = st.number_input("Port", 1, 65535, 8081)
 device_id = st.text_input("Device ID", "esp32car-01").strip()
 qos = st.selectbox("QoS", [0, 1], index=0)
 
 topic_cmd = f"esp32car/{device_id}/cmd"
 topic_status = f"esp32car/{device_id}/status"
 
-# Persistent WS client
+# Maintain client between reruns
 if "client" not in st.session_state:
     c = mqtt.Client(client_id=f"st-wss-{int(time.time())}", transport="websockets")
-    # Mosquitto WSS has no path (leave blank)
     st.session_state.client = c
     st.session_state.connected = False
+    st.session_state.tls_configured = False  # <— new flag
 
 client = st.session_state.client
 info = st.empty()
@@ -30,35 +30,41 @@ echo_box = st.empty()
 def on_connect(c, userdata, flags, rc):
     st.session_state.connected = (rc == 0)
     if rc == 0:
-        info.success(f"Connected to {broker}:{port} (WSS)")
+        info.success(f"✅ Connected to {broker}:{port} (WSS/TLS)")
         c.subscribe(topic_status, qos=qos)
-        c.subscribe(topic_cmd, qos=qos)  # echo our own publishes
+        c.subscribe(topic_cmd, qos=qos)
     else:
-        info.error(f"Connect failed (rc={rc})")
+        info.error(f"❌ Connect failed (rc={rc})")
 
 def on_message(c, userdata, msg):
     payload = msg.payload.decode("utf-8", "ignore")
     if msg.topic.endswith("/status"):
         status_box.markdown(f"**Status** `{msg.topic}`\n```\n{payload}\n```")
     else:
-        echo_box.markdown(f"**Broker saw command** `{msg.topic}` → `{payload}`")
+        echo_box.markdown(f"**Command echoed** `{msg.topic}` → `{payload}`")
 
 client.on_connect = on_connect
 client.on_message = on_message
 
 def connect():
     try:
-        client.tls_set()  # enable TLS for WSS
-        client.connect(broker, int(port), keepalive=45)
-        client.loop_start()
-        time.sleep(0.8)
+        if not st.session_state.tls_configured:
+            client.tls_set()                     # only once
+            st.session_state.tls_configured = True
         if not st.session_state.connected:
-            info.warning("Connecting… click again if needed.")
+            client.connect(broker, int(port), keepalive=45)
+            client.loop_start()
+            time.sleep(0.7)
+            if not st.session_state.connected:
+                info.warning("Connecting… click again if needed.")
+        else:
+            info.info("Already connected.")
     except Exception as e:
         info.error(f"MQTT connect error: {e}")
 
 if st.button("Connect MQTT"):
     connect()
+
 if not st.session_state.connected:
     connect()
 
@@ -93,4 +99,4 @@ cols3 = st.columns(3)
 with cols3[1]:
     if st.button("⬇️ Backward"): publish_cmd("B")
 
-st.caption(f"CMD: `{topic_cmd}` • STATUS: `{topic_status}` • Transport: WSS (TLS)")
+st.caption(f"CMD: `{topic_cmd}` • STATUS: `{topic_status}` • Transport: WSS 8081 (TLS)")
