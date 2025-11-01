@@ -1,3 +1,4 @@
+!pip install streamlit paho-mqtt
 # controller_mqtt.py — Streamlit MQTT controller for ESP32 car
 import json
 import time
